@@ -1,10 +1,32 @@
-import { z } from 'zod';
+import { z } from "zod";
+
+// Imagem de teste padrão usada pelo ML na própria documentação oficial
+const ML_TEST_PICTURE =
+  "https://www.motorino.com.br/site/wp-content/uploads/2018/01/produto_de_teste_amarelo_4_2_20171020224326-400x400.jpg";
 
 export const createAdSchema = z.object({
-  title: z.string().min(1),
+  title: z.string().min(10, "Título deve ter no mínimo 10 caracteres"),
   description: z.string().optional(),
   price: z.number().positive(),
   availableQuantity: z.number().int().nonnegative(),
+  categoryId: z.string().default("MLB3530"), // default: "Outros" — categoria folha usada nos exemplos da doc do ML
+  condition: z.enum(["new", "used", "not_specified"]).default("new"),
+  listingTypeId: z.string().default("gold_special"),
+  currencyId: z.string().default("BRL"),
+  buyingMode: z.string().default("buy_it_now"),
+  warrantyType: z.string().default("Garantia do vendedor"),
+  warrantyTime: z.string().default("90 dias"),
+  /** Atributos dinâmicos da categoria folha selecionada (ex: BRAND, MODEL, etc) */
+  attributes: z
+    .array(z.object({ id: z.string(), value_name: z.string() }))
+    .optional()
+    .default([]),
+  // Em homologação, se nenhuma imagem for enviada usa a imagem de teste oficial do ML
+  pictureUrls: z
+    .array(z.string().url())
+    .optional()
+    .default([ML_TEST_PICTURE])
+    .transform((urls) => (urls.length > 0 ? urls : [ML_TEST_PICTURE])),
 });
 
 export const updateAdSchema = z.object({
