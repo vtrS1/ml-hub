@@ -14,7 +14,7 @@ export class AuthController {
     try {
       const { code } = callbackQuerySchema.parse(req.query);
       const { token } = await this.authService.handleCallback(code);
-      res.redirect(`${process.env['FRONTEND_URL']}?token=${token}`);
+      res.redirect(`${process.env['FRONTEND_URL']}/auth/callback?token=${token}`);
     } catch (err) {
       next(err);
     }
