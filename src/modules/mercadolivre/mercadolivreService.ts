@@ -1,6 +1,6 @@
-import { mlHttpClient } from '../../shared/http/httpClient.js';
-import { env } from '../../config/env.js';
-import { withRetry } from '../../shared/utils/retry.js';
+import { mlHttpClient } from "../../shared/http/httpClient.js";
+import { env } from "../../config/env.js";
+import { withRetry } from "../../shared/utils/retry.js";
 
 export interface MLTokenResponse {
   access_token: string;
@@ -12,6 +12,55 @@ export interface MLTokenResponse {
 export interface MLUserInfo {
   id: number;
   nickname: string;
+}
+
+export interface MLSaleTerm {
+  id: string;
+  value_name: string;
+}
+
+export interface MLAttribute {
+  id: string;
+  value_name: string;
+  /** Para atributos do tipo number_unit (ex: WEIGHT_CAPACITY), informa a unidade separada */
+  unit_id?: string;
+}
+
+export interface MLAttributeValue {
+  id: string;
+  name: string;
+}
+
+/** Definição de um atributo de categoria retornado pelo ML */
+export interface MLCategoryAttribute {
+  id: string;
+  name: string;
+  value_type: "string" | "number" | "boolean" | "list" | "number_unit";
+  tags: {
+    required?: boolean;
+    catalog_required?: boolean;
+    hidden?: boolean;
+    read_only?: boolean;
+    multivalued?: boolean;
+    variation_attribute?: boolean;
+  };
+  values?: MLAttributeValue[];
+  allowed_units?: { id: string; name: string }[];
+  default_unit?: string;
+  hint?: string;
+}
+
+export interface MLCategoryDetails {
+  id: string;
+  name: string;
+  path_from_root: { id: string; name: string }[];
+  children_categories: {
+    id: string;
+    name: string;
+    total_items_in_this_category: number;
+  }[];
+  /** Se vazio, é categoria folha */
+  leaf_category_count: number;
 }
 
 export interface MLItem {
@@ -33,7 +82,7 @@ export interface MLItemsSearchResponse {
 export class MercadoLivreService {
   getAuthorizationUrl(): string {
     const params = new URLSearchParams({
-      response_type: 'code',
+      response_type: "code",
       client_id: env.ML_APP_ID,
       redirect_uri: env.ML_REDIRECT_URI,
     });
@@ -42,51 +91,64 @@ export class MercadoLivreService {
 
   async exchangeCodeForTokens(code: string): Promise<MLTokenResponse> {
     return withRetry(async () => {
-      const { data } = await mlHttpClient.post<MLTokenResponse>('/oauth/token', {
-        grant_type: 'authorization_code',
-        client_id: env.ML_APP_ID,
-        client_secret: env.ML_CLIENT_SECRET,
-        code,
-        redirect_uri: env.ML_REDIRECT_URI,
-      });
+      const { data } = await mlHttpClient.post<MLTokenResponse>(
+        "/oauth/token",
+        {
+          grant_type: "authorization_code",
+          client_id: env.ML_APP_ID,
+          client_secret: env.ML_CLIENT_SECRET,
+          code,
+          redirect_uri: env.ML_REDIRECT_URI,
+        },
+      );
       return data;
     });
   }
 
   async refreshAccessToken(refreshToken: string): Promise<MLTokenResponse> {
     return withRetry(async () => {
-      const { data } = await mlHttpClient.post<MLTokenResponse>('/oauth/token', {
-        grant_type: 'refresh_token',
-        client_id: env.ML_APP_ID,
-        client_secret: env.ML_CLIENT_SECRET,
-        refresh_token: refreshToken,
-      });
+      const { data } = await mlHttpClient.post<MLTokenResponse>(
+        "/oauth/token",
+        {
+          grant_type: "refresh_token",
+          client_id: env.ML_APP_ID,
+          client_secret: env.ML_CLIENT_SECRET,
+          refresh_token: refreshToken,
+        },
+      );
       return data;
     });
   }
 
   async getUserInfo(accessToken: string): Promise<MLUserInfo> {
     return withRetry(async () => {
-      const { data } = await mlHttpClient.get<MLUserInfo>('/users/me', {
+      const { data } = await mlHttpClient.get<MLUserInfo>("/users/me", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       return data;
     });
   }
 
-  async getSellerItems(sellerId: string, accessToken: string): Promise<MLItem[]> {
+  async getSellerItems(
+    sellerId: string,
+    accessToken: string,
+  ): Promise<MLItem[]> {
     return withRetry(async () => {
-      const { data: searchData } = await mlHttpClient.get<MLItemsSearchResponse>(
-        `/users/${sellerId}/items/search`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
+      const { data: searchData } =
+        await mlHttpClient.get<MLItemsSearchResponse>(
+          `/users/${sellerId}/items/search`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
 
       if (searchData.results.length === 0) return [];
 
-      const ids = searchData.results.join(',');
-      const { data: items } = await mlHttpClient.get<MLItem[]>(`/items?ids=${ids}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const ids = searchData.results.join(",");
+      const { data: items } = await mlHttpClient.get<MLItem[]>(
+        `/items?ids=${ids}`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
       return items;
     });
   }
@@ -100,9 +162,12 @@ export class MercadoLivreService {
     });
   }
 
-  async createItem(payload: Partial<MLItem>, accessToken: string): Promise<MLItem> {
+  async createItem(
+    payload: Partial<MLItem>,
+    accessToken: string,
+  ): Promise<MLItem> {
     return withRetry(async () => {
-      const { data } = await mlHttpClient.post<MLItem>('/items', payload, {
+      const { data } = await mlHttpClient.post<MLItem>("/items", payload, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       return data;
@@ -115,9 +180,13 @@ export class MercadoLivreService {
     accessToken: string,
   ): Promise<MLItem> {
     return withRetry(async () => {
-      const { data } = await mlHttpClient.put<MLItem>(`/items/${itemId}`, payload, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const { data } = await mlHttpClient.put<MLItem>(
+        `/items/${itemId}`,
+        payload,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
       return data;
     });
   }
@@ -135,14 +204,18 @@ export class MercadoLivreService {
     availableQuantity: number,
     accessToken: string,
   ): Promise<void> {
-    await this.updateItem(itemId, { available_quantity: availableQuantity }, accessToken);
+    await this.updateItem(
+      itemId,
+      { available_quantity: availableQuantity },
+      accessToken,
+    );
   }
 
   async pauseItem(itemId: string, accessToken: string): Promise<void> {
-    await this.updateItem(itemId, { status: 'paused' }, accessToken);
+    await this.updateItem(itemId, { status: "paused" }, accessToken);
   }
 
   async activateItem(itemId: string, accessToken: string): Promise<void> {
-    await this.updateItem(itemId, { status: 'active' }, accessToken);
+    await this.updateItem(itemId, { status: "active" }, accessToken);
   }
 }

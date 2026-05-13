@@ -1,10 +1,24 @@
-import { z } from 'zod';
+import { z } from "zod";
+
+const attributeSchema = z.object({
+  id: z.string(),
+  value_name: z.string(),
+});
 
 export const createAdSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   price: z.number().positive(),
   availableQuantity: z.number().int().nonnegative(),
+  categoryId: z.string().default("MLB3530"),
+  condition: z.enum(["new", "used"]).default("new"),
+  listingTypeId: z.string().default("gold_special"),
+  currencyId: z.string().default("BRL"),
+  buyingMode: z.string().default("buy_it_now"),
+  warrantyType: z.string().optional(),
+  warrantyTime: z.string().optional(),
+  attributes: z.array(attributeSchema).optional(),
+  pictureUrls: z.array(z.string().url()).optional(),
 });
 
 export const updateAdSchema = z.object({

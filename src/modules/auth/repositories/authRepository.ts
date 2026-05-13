@@ -1,6 +1,11 @@
-import { SellerModel, type ISeller } from '../schemas/sellerSchema.js';
+import mongoose from "mongoose";
+import { SellerModel, type ISeller } from "../schemas/sellerSchema.js";
 
 export class AuthRepository {
+  async findById(id: string): Promise<ISeller | null> {
+    return SellerModel.findById(new mongoose.Types.ObjectId(id));
+  }
+
   async findByMlUserId(mlUserId: string): Promise<ISeller | null> {
     return SellerModel.findOne({ mlUserId });
   }
