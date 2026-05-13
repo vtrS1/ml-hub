@@ -22,8 +22,7 @@ export class AdsService {
   ) {}
 
   private async getSellerWithToken(sellerId: string) {
-    // sellerId no JWT é o _id do MongoDB
-    const seller = await this.authRepository.findById(sellerId);
+    const seller = await this.authRepository.findByMlUserId(sellerId);
     if (!seller) throw new AppError("Vendedor não encontrado", 404);
     return seller;
   }
@@ -39,8 +38,7 @@ export class AdsService {
   }
 
   async create(sellerId: string, dto: CreateAdDto): Promise<IAd> {
-    // sellerId no JWT é o _id do MongoDB
-    const seller = await this.authRepository.findById(sellerId);
+    const seller = await this.authRepository.findByMlUserId(sellerId);
     if (!seller) throw new AppError("Vendedor não encontrado", 404);
 
     let mlItemId = "";
@@ -56,12 +54,28 @@ export class AdsService {
             ? "Usado"
             : "Não especificado";
 
-      // Mescla ITEM_CONDITION fixo com os atributos dinâmicos enviados pelo frontend.
-      // O frontend envia atributos obrigatórios da categoria (BRAND, MODEL, etc).
-      // Garante que ITEM_CONDITION não seja duplicado caso o frontend também envie.
-      const dynamicAttrs = (dto.attributes ?? []).filter(
-        (a) => a.id !== "ITEM_CONDITION",
-      );
+      const SKIP_IDS = [
+        "GTIN",
+        "EAN",
+        "UPC",
+        "ISBN",
+        "MPN",
+        "SELLER_SKU",
+        "ITEM_CONDITION",
+      ];
+      const dynamicAttrs = (dto.attributes ?? [])
+        .filter((a) => !SKIP_IDS.includes(a.id))
+        // Remove atributos vazios
+        .filter((a) => a.value_name && a.value_name.trim().length > 0)
+        // Para atributos number_unit (ex: "12 kg"), extrai unit_id para o payload do ML
+        .map((a) => {
+          const parts = a.value_name.trim().split(" ");
+          if (parts.length === 2 && !isNaN(Number(parts[0]))) {
+            return { id: a.id, value_name: a.value_name, unit_id: parts[1] };
+          }
+          return { id: a.id, value_name: a.value_name };
+        });
+
       const attributes = [
         { id: "ITEM_CONDITION", value_name: conditionValueName },
         ...dynamicAttrs,
@@ -72,17 +86,6 @@ export class AdsService {
           title: dto.title,
           price: dto.price,
           available_quantity: dto.availableQuantity,
-          category_id: dto.categoryId,
-          condition: dto.condition,
-          listing_type_id: dto.listingTypeId,
-          currency_id: dto.currencyId,
-          buying_mode: dto.buyingMode,
-          sale_terms: [
-            { id: "WARRANTY_TYPE", value_name: dto.warrantyType },
-            { id: "WARRANTY_TIME", value_name: dto.warrantyTime },
-          ],
-          attributes,
-          pictures: dto.pictureUrls.map((url) => ({ source: url })),
         },
         seller.accessToken,
       );
@@ -90,42 +93,8 @@ export class AdsService {
       thumbnail = mlItem.thumbnail;
       permalink = mlItem.permalink;
       syncStatus = SyncStatus.SYNCED;
-
-      // Descrição deve ser enviada em POST separado conforme documentação ML
-      if (dto.description && mlItemId) {
-        try {
-          await this.mlService.postDescription(
-            mlItemId,
-            dto.description,
-            seller.accessToken,
-          );
-        } catch (err) {
-          logger.warn({ err }, "Falha ao enviar descrição ao ML");
-        }
-      }
-    } catch (err: unknown) {
-      // Loga o erro detalhado incluindo a resposta do ML para facilitar debug
-      const axiosErr = err as {
-        response?: { data?: unknown; status?: number };
-      };
-      logger.error(
-        {
-          mlResponse: axiosErr?.response?.data,
-          mlStatus: axiosErr?.response?.status,
-          err,
-        },
-        "Falha ao criar item no ML",
-      );
-      // Em desenvolvimento, lança o erro para facilitar debug em vez de salvar como PENDING
-      if (process.env["NODE_ENV"] !== "production") {
-        const detail =
-          axiosErr?.response?.data ??
-          (err instanceof Error ? err.message : err);
-        throw new AppError(
-          `Falha ao criar item no Mercado Livre: ${JSON.stringify(detail)}`,
-          502,
-        );
-      }
+    } catch (err) {
+      logger.warn({ err }, "Falha ao criar item no ML, salvando como PENDING");
     }
 
     const existingAd = mlItemId
@@ -281,69 +250,100 @@ export class AdsService {
     return updated;
   }
 
-  async sync(sellerId: string): Promise<{ synced: number; errors: number }> {
+  async sync(
+    sellerId: string,
+  ): Promise<{ synced: number; imported: number; errors: number }> {
     const seller = await this.authRepository.findById(sellerId);
     if (!seller) throw new AppError("Vendedor não encontrado", 404);
 
-    const ads = await this.adsRepository.findAllBySeller(sellerId);
     let synced = 0;
+    let imported = 0;
     let errors = 0;
 
-    for (const ad of ads) {
-      if (!ad.mlItemId) continue;
+    // Busca TODOS os anúncios do seller no ML (incluindo os criados fora da plataforma)
+    let mlItems: Awaited<ReturnType<typeof this.mlService.getSellerItems>> = [];
+    try {
+      mlItems = await this.mlService.getSellerItems(
+        seller.mlUserId.toString(),
+        seller.accessToken,
+      );
+    } catch (err) {
+      logger.error({ err }, "Erro ao buscar itens do seller no ML");
+      throw new AppError("Falha ao buscar anúncios do Mercado Livre", 502);
+    }
+
+    // Mapeia os mlItemIds já salvos no banco para detectar novos
+    const existingAds = await this.adsRepository.findAllBySeller(sellerId);
+    const existingMlIds = new Set(existingAds.map((a) => a.mlItemId));
+
+    for (const mlItem of mlItems) {
+      // mlItem pode ser um objeto com body quando buscado em lote — normaliza
+      const item =
+        (mlItem as unknown as { body?: typeof mlItem; code?: number }).body ??
+        mlItem;
+      if (!item?.id) continue;
 
       try {
-        const mlItem = await this.mlService.getItem(
-          ad.mlItemId,
-          seller.accessToken,
-        );
+        if (existingMlIds.has(item.id)) {
+          // Anúncio já existe no banco → atualiza dados
+          const ad = existingAds.find((a) => a.mlItemId === item.id)!;
+          const hasConflict =
+            item.price !== ad.price ||
+            item.available_quantity !== ad.availableQuantity;
 
-        const hasConflict =
-          mlItem.price !== ad.price ||
-          mlItem.available_quantity !== ad.availableQuantity;
-
-        await this.adsRepository.updateSyncStatus(
-          ad._id.toString(),
-          hasConflict ? SyncStatus.CONFLICT : SyncStatus.SYNCED,
-          {
-            price: mlItem.price,
-            availableQuantity: mlItem.available_quantity,
-            status: mlItem.status,
-            thumbnail: mlItem.thumbnail,
-            permalink: mlItem.permalink,
-          } as Partial<IAd>,
-        );
-        synced++;
+          await this.adsRepository.updateSyncStatus(
+            ad._id.toString(),
+            hasConflict ? SyncStatus.CONFLICT : SyncStatus.SYNCED,
+            {
+              price: item.price,
+              availableQuantity: item.available_quantity,
+              status: item.status,
+              thumbnail: item.thumbnail,
+              permalink: item.permalink,
+            } as Partial<IAd>,
+          );
+          synced++;
+        } else {
+          // Anúncio novo (criado direto no ML) → importa para o banco
+          await this.adsRepository.create({
+            sellerId: new mongoose.Types.ObjectId(sellerId),
+            mlItemId: item.id,
+            title: item.title,
+            description: "",
+            price: item.price,
+            availableQuantity: item.available_quantity,
+            status: item.status ?? "active",
+            thumbnail: item.thumbnail ?? "",
+            permalink: item.permalink ?? "",
+            syncStatus: SyncStatus.SYNCED,
+            lastSyncAt: new Date(),
+          } as Partial<IAd>);
+          imported++;
+        }
       } catch (err) {
-        logger.error({ err, adId: ad._id }, "Erro ao sincronizar anúncio");
-        await this.adsRepository.updateSyncStatus(
-          ad._id.toString(),
-          SyncStatus.ERROR,
-        );
+        logger.error({ err, mlItemId: item.id }, "Erro ao sincronizar anúncio");
         errors++;
       }
     }
 
-    return { synced, errors };
+    return { synced, imported, errors };
   }
 
-  async getCategories(
-    sellerId: string,
-  ): Promise<{ id: string; name: string }[]> {
+  async getCategories(sellerId: string): Promise<{ id: string; name: string }[]> {
     const seller = await this.authRepository.findById(sellerId);
-    if (!seller) throw new AppError("Vendedor não encontrado", 404);
+    if (!seller) throw new AppError('Vendedor não encontrado', 404);
     return this.mlService.getCategories(seller.accessToken);
   }
 
   async getCategoryDetails(sellerId: string, categoryId: string) {
     const seller = await this.authRepository.findById(sellerId);
-    if (!seller) throw new AppError("Vendedor não encontrado", 404);
+    if (!seller) throw new AppError('Vendedor não encontrado', 404);
     return this.mlService.getCategoryDetails(categoryId, seller.accessToken);
   }
 
   async getCategoryAttributes(sellerId: string, categoryId: string) {
     const seller = await this.authRepository.findById(sellerId);
-    if (!seller) throw new AppError("Vendedor não encontrado", 404);
+    if (!seller) throw new AppError('Vendedor não encontrado', 404);
     return this.mlService.getCategoryAttributes(categoryId, seller.accessToken);
   }
 }

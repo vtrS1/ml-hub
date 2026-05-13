@@ -1,7 +1,6 @@
 import { mlHttpClient } from "../../shared/http/httpClient.js";
 import { env } from "../../config/env.js";
 import { withRetry } from "../../shared/utils/retry.js";
-import { logger } from "../../shared/logger/logger.js";
 
 export interface MLTokenResponse {
   access_token: string;
@@ -23,6 +22,8 @@ export interface MLSaleTerm {
 export interface MLAttribute {
   id: string;
   value_name: string;
+  /** Para atributos do tipo number_unit (ex: WEIGHT_CAPACITY), informa a unidade separada */
+  unit_id?: string;
 }
 
 export interface MLAttributeValue {
@@ -71,14 +72,6 @@ export interface MLItem {
   thumbnail: string;
   permalink: string;
   description?: string;
-  category_id?: string;
-  condition?: "new" | "used" | "not_specified";
-  listing_type_id?: string;
-  currency_id?: string;
-  buying_mode?: string;
-  sale_terms?: MLSaleTerm[];
-  attributes?: MLAttribute[];
-  pictures?: { source: string }[];
 }
 
 export interface MLItemsSearchResponse {
@@ -87,10 +80,6 @@ export interface MLItemsSearchResponse {
 }
 
 export class MercadoLivreService {
-  // Cache de categorias para evitar bater na API do ML a cada requisição
-  private categoriesCache: { id: string; name: string }[] | null = null;
-  private categoriesCachedAt: number = 0;
-  private readonly CATEGORIES_TTL_MS = 60 * 60 * 1000; // 1 hora
   getAuthorizationUrl(): string {
     const params = new URLSearchParams({
       response_type: "code",
@@ -230,93 +219,33 @@ export class MercadoLivreService {
     await this.updateItem(itemId, { status: "active" }, accessToken);
   }
 
-  // Categorias folha do MLB para fallback quando a API do ML bloquear a requisição
-  // Todas são categorias folha válidas (não têm filhos) — seguras para publicar
-  private static readonly MLB_CATEGORIES_FALLBACK: {
-    id: string;
-    name: string;
-  }[] = [
-    { id: "MLB3530", name: "Outros (Geral)" },
-    { id: "MLB1953", name: "Motos" },
-    { id: "MLB1430", name: "Livros" },
-    { id: "MLB1196", name: "Indústria e Comércio" },
-    { id: "MLB1144", name: "Esportes e Fitness" },
-    { id: "MLB1182", name: "Games e Consoles" },
-    { id: "MLB1499", name: "Informática" },
-    { id: "MLB1276", name: "Eletrodomésticos" },
-    { id: "MLB1168", name: "Moda e Acessórios" },
-    { id: "MLB1051", name: "Celulares e Telefones" },
-  ];
-
-  async getCategories(
-    accessToken: string,
-  ): Promise<{ id: string; name: string }[]> {
-    const now = Date.now();
-    if (
-      this.categoriesCache &&
-      now - this.categoriesCachedAt < this.CATEGORIES_TTL_MS
-    ) {
-      return this.categoriesCache;
-    }
-
-    try {
+  async getCategories(accessToken: string): Promise<{ id: string; name: string }[]> {
+    return withRetry(async () => {
       const { data } = await mlHttpClient.get<{ id: string; name: string }[]>(
-        "/sites/MLB/categories",
+        '/sites/MLB/categories',
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
-      this.categoriesCache = data;
-      this.categoriesCachedAt = Date.now();
       return data;
-    } catch (err) {
-      logger.warn({ err }, "Falha ao buscar categorias do ML, usando fallback");
-      return MercadoLivreService.MLB_CATEGORIES_FALLBACK;
-    }
-  }
-
-  async postDescription(
-    itemId: string,
-    plainText: string,
-    accessToken: string,
-  ): Promise<void> {
-    await withRetry(async () => {
-      await mlHttpClient.post(
-        `/items/${itemId}/description`,
-        { plain_text: plainText },
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
     });
   }
 
-  /**
-   * Retorna os detalhes de uma categoria, incluindo subcategorias.
-   * Se children_categories estiver vazio, é uma categoria folha.
-   */
-  async getCategoryDetails(
-    categoryId: string,
-    accessToken: string,
-  ): Promise<MLCategoryDetails> {
-    const { data } = await mlHttpClient.get<MLCategoryDetails>(
-      `/categories/${categoryId}`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      },
-    );
-    return data;
+  async getCategoryDetails(categoryId: string, accessToken: string): Promise<MLCategoryDetails> {
+    return withRetry(async () => {
+      const { data } = await mlHttpClient.get<MLCategoryDetails>(
+        `/categories/${categoryId}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      return data;
+    });
   }
 
-  /**
-   * Retorna os atributos de uma categoria folha.
-   * Use tags.required ou tags.catalog_required para identificar campos obrigatórios.
-   */
-  async getCategoryAttributes(
-    categoryId: string,
-    accessToken: string,
-  ): Promise<MLCategoryAttribute[]> {
-    const { data } = await mlHttpClient.get<MLCategoryAttribute[]>(
-      `/categories/${categoryId}/attributes`,
-      { headers: { Authorization: `Bearer ${accessToken}` } },
-    );
-    // Filtra atributos hidden/read_only que o seller não precisa preencher
-    return data.filter((a) => !a.tags?.hidden && !a.tags?.read_only);
+  async getCategoryAttributes(categoryId: string, accessToken: string): Promise<MLCategoryAttribute[]> {
+    return withRetry(async () => {
+      const { data } = await mlHttpClient.get<MLCategoryAttribute[]>(
+        `/categories/${categoryId}/attributes`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      return data;
+    });
   }
 }
