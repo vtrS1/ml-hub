@@ -218,4 +218,34 @@ export class MercadoLivreService {
   async activateItem(itemId: string, accessToken: string): Promise<void> {
     await this.updateItem(itemId, { status: "active" }, accessToken);
   }
+
+  async getCategories(accessToken: string): Promise<{ id: string; name: string }[]> {
+    return withRetry(async () => {
+      const { data } = await mlHttpClient.get<{ id: string; name: string }[]>(
+        '/sites/MLB/categories',
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      return data;
+    });
+  }
+
+  async getCategoryDetails(categoryId: string, accessToken: string): Promise<MLCategoryDetails> {
+    return withRetry(async () => {
+      const { data } = await mlHttpClient.get<MLCategoryDetails>(
+        `/categories/${categoryId}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      return data;
+    });
+  }
+
+  async getCategoryAttributes(categoryId: string, accessToken: string): Promise<MLCategoryAttribute[]> {
+    return withRetry(async () => {
+      const { data } = await mlHttpClient.get<MLCategoryAttribute[]>(
+        `/categories/${categoryId}/attributes`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      return data;
+    });
+  }
 }

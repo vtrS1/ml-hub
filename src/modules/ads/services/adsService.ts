@@ -328,4 +328,22 @@ export class AdsService {
 
     return { synced, imported, errors };
   }
+
+  async getCategories(sellerId: string): Promise<{ id: string; name: string }[]> {
+    const seller = await this.authRepository.findById(sellerId);
+    if (!seller) throw new AppError('Vendedor não encontrado', 404);
+    return this.mlService.getCategories(seller.accessToken);
+  }
+
+  async getCategoryDetails(sellerId: string, categoryId: string) {
+    const seller = await this.authRepository.findById(sellerId);
+    if (!seller) throw new AppError('Vendedor não encontrado', 404);
+    return this.mlService.getCategoryDetails(categoryId, seller.accessToken);
+  }
+
+  async getCategoryAttributes(sellerId: string, categoryId: string) {
+    const seller = await this.authRepository.findById(sellerId);
+    if (!seller) throw new AppError('Vendedor não encontrado', 404);
+    return this.mlService.getCategoryAttributes(categoryId, seller.accessToken);
+  }
 }
