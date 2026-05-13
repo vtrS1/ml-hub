@@ -1,6 +1,10 @@
-import { SellerModel, type ISeller } from '../schemas/sellerSchema.js';
+import { SellerModel, type ISeller } from "../schemas/sellerSchema.js";
 
 export class AuthRepository {
+  async findById(id: string): Promise<ISeller | null> {
+    return SellerModel.findById(id);
+  }
+
   async findByMlUserId(mlUserId: string): Promise<ISeller | null> {
     return SellerModel.findOne({ mlUserId });
   }
