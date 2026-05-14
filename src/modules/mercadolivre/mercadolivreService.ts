@@ -45,6 +45,9 @@ export interface MLCategoryAttribute {
     multivalued?: boolean;
     variation_attribute?: boolean;
     business_conditional?: boolean;
+    new_hidden?: boolean;
+    used_hidden?: boolean;
+    validate?: boolean;
     [key: string]: unknown;
   };
   values?: MLAttributeValue[];

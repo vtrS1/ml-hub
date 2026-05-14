@@ -53,14 +53,19 @@ export class AdsService {
       );
 
       const sentIds = new Set((dto.attributes ?? []).map((a) => a.id));
+      const ALWAYS_SKIP_VALIDATION = ["SELLER_SKU", "ITEM_CONDITION", "EMPTY_GTIN_REASON"];
+      const isNew = dto.condition === "new";
+
       const missing = categoryAttrs
         .filter(
           (a) =>
             (a.tags.required || a.tags.catalog_required || a.tags.conditional_required) &&
-            !ALWAYS_SKIP.includes(a.id) &&
+            !ALWAYS_SKIP_VALIDATION.includes(a.id) &&
             !a.tags.hidden &&
             !a.tags.read_only &&
             !(a.tags as Record<string, unknown>).business_conditional &&
+            !(isNew && (a.tags as Record<string, unknown>).new_hidden) &&
+            !(!isNew && (a.tags as Record<string, unknown>).used_hidden) &&
             !sentIds.has(a.id),
         )
         .map((a) => a.name);
