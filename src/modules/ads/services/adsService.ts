@@ -42,33 +42,35 @@ export class AdsService {
     const seller = await this.authRepository.findById(sellerId);
     if (!seller) throw new AppError("Vendedor não encontrado", 404);
 
-    // --- Pré-validação: busca atributos da categoria e verifica obrigatórios ---
-    // IDs sempre ignorados (gerados automaticamente ou tratados separadamente)
-    // GRADING: gerenciado internamente pelo ML (business_conditional), nunca enviar
-    const ALWAYS_SKIP = ["SELLER_SKU", "ITEM_CONDITION", "GRADING"];
+    const isNew = dto.condition === "new";
 
+    // Busca atributos da categoria para usar como fonte de verdade
+    // tanto na validação quanto na formatação dos atributos enviados ao ML
+    let categoryAttrMap = new Map<string, { value_type: string; tags: Record<string, unknown> }>();
     try {
-      const categoryAttrs = await this.mlService.getCategoryAttributes(
-        dto.categoryId,
-        seller.accessToken,
-      );
+      const categoryAttrs = await this.mlService.getCategoryAttributes(dto.categoryId, seller.accessToken);
+      categoryAttrMap = new Map(categoryAttrs.map((a) => [a.id, { value_type: a.value_type, tags: a.tags as Record<string, unknown> }]));
+
+      // Determina quais atributos devem ser enviados pelo usuário
+      // (não são gerados automaticamente pelo ML)
+      const shouldBeFilledByUser = (tags: Record<string, unknown>) =>
+        !tags["hidden"] &&
+        !tags["read_only"] &&
+        !tags["business_conditional"] &&
+        !(isNew && tags["new_hidden"]) &&
+        !(!isNew && tags["used_hidden"]);
 
       const sentIds = new Set((dto.attributes ?? []).map((a) => a.id));
-      const ALWAYS_SKIP_VALIDATION = ["SELLER_SKU", "ITEM_CONDITION", "EMPTY_GTIN_REASON"];
-      const isNew = dto.condition === "new";
-
       const missing = categoryAttrs
-        .filter(
-          (a) =>
-            (a.tags.required || a.tags.catalog_required || a.tags.conditional_required) &&
-            !ALWAYS_SKIP_VALIDATION.includes(a.id) &&
-            !a.tags.hidden &&
-            !a.tags.read_only &&
-            !(a.tags as Record<string, unknown>).business_conditional &&
-            !(isNew && (a.tags as Record<string, unknown>).new_hidden) &&
-            !(!isNew && (a.tags as Record<string, unknown>).used_hidden) &&
-            !sentIds.has(a.id),
-        )
+        .filter((a) => {
+          const tags = a.tags as Record<string, unknown>;
+          return (
+            (tags["required"] || tags["catalog_required"] || tags["conditional_required"]) &&
+            a.id !== "ITEM_CONDITION" && // tratado separadamente
+            shouldBeFilledByUser(tags) &&
+            !sentIds.has(a.id)
+          );
+        })
         .map((a) => a.name);
 
       if (missing.length > 0) {
@@ -79,7 +81,6 @@ export class AdsService {
       }
     } catch (err) {
       if (err instanceof AppError) throw err;
-      // Se falhar ao buscar atributos, loga mas não bloqueia a criação
       logger.warn({ err }, "Não foi possível validar atributos da categoria");
     }
     // -------------------------------------------------------------------------
@@ -91,27 +92,40 @@ export class AdsService {
 
     try {
       const conditionValueName =
-        dto.condition === "new"
-          ? "Novo"
-          : dto.condition === "used"
-            ? "Usado"
-            : "Não especificado";
+        dto.condition === "new" ? "Novo" : dto.condition === "used" ? "Usado" : "Não especificado";
 
+      // Formata atributos dinamicamente usando as tags da categoria como fonte de verdade
+      // Nunca envia atributos que o ML gerencia internamente (hidden, read_only, business_conditional, etc.)
       const dynamicAttrs = (dto.attributes ?? [])
-        .filter((a) => !ALWAYS_SKIP.includes(a.id))
-        .filter((a) => a.value_name && a.value_name.trim().length > 0 && a.value_name !== "null")
+        .filter((a) => {
+          if (!a.value_name || a.value_name.trim() === "" || a.value_name === "null") return false;
+          const meta = categoryAttrMap.get(a.id);
+          if (!meta) return true; // atributo desconhecido: tenta enviar mesmo assim
+          const tags = meta.tags;
+          if (tags["hidden"] || tags["read_only"] || tags["business_conditional"]) return false;
+          if (isNew && tags["new_hidden"]) return false;
+          if (!isNew && tags["used_hidden"]) return false;
+          if (a.id === "ITEM_CONDITION") return false; // adicionado manualmente abaixo
+          return true;
+        })
         .map((a) => {
-          const raw = a.value_name.trim();
-          const parts = raw.split(/\s+/); // split por qualquer whitespace
-          // Para atributos number_unit: "42 mm" → { value_name: "42", unit_id: "mm" }
-          if (parts.length === 2 && !isNaN(Number(parts[0])) && isNaN(Number(parts[1]))) {
-            return { id: a.id, value_name: parts[0], unit_id: parts[1] };
+          const meta = categoryAttrMap.get(a.id);
+          const isNumberUnit = meta?.value_type === "number_unit";
+
+          // Se o frontend já enviou unit_id separado, usa diretamente
+          if (isNumberUnit && a.unit_id) {
+            return { id: a.id, value_name: a.value_name.trim(), unit_id: a.unit_id };
           }
-          // Se só tem número mas o atributo tem unit_id enviado separado
-          if (parts.length === 1 && a.unit_id) {
-            return { id: a.id, value_name: parts[0], unit_id: a.unit_id };
+
+          // Se value_name contém "número unidade" (ex: "2234 mAh"), separa automaticamente
+          if (isNumberUnit) {
+            const parts = a.value_name.trim().split(/\s+/);
+            if (parts.length === 2 && !isNaN(Number(parts[0])) && isNaN(Number(parts[1]))) {
+              return { id: a.id, value_name: parts[0], unit_id: parts[1] };
+            }
           }
-          return { id: a.id, value_name: raw };
+
+          return { id: a.id, value_name: a.value_name.trim() };
         });
 
       const attributes = [
@@ -133,12 +147,8 @@ export class AdsService {
           ...(dto.warrantyType || dto.warrantyTime
             ? {
                 sale_terms: [
-                  ...(dto.warrantyType
-                    ? [{ id: "WARRANTY_TYPE", value_name: dto.warrantyType }]
-                    : []),
-                  ...(dto.warrantyTime
-                    ? [{ id: "WARRANTY_TIME", value_name: dto.warrantyTime }]
-                    : []),
+                  ...(dto.warrantyType ? [{ id: "WARRANTY_TYPE", value_name: dto.warrantyType }] : []),
+                  ...(dto.warrantyTime ? [{ id: "WARRANTY_TIME", value_name: dto.warrantyTime }] : []),
                 ],
               }
             : {}),
