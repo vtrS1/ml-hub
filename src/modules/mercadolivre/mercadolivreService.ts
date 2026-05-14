@@ -39,6 +39,7 @@ export interface MLCategoryAttribute {
   tags: {
     required?: boolean;
     catalog_required?: boolean;
+    conditional_required?: boolean;
     hidden?: boolean;
     read_only?: boolean;
     multivalued?: boolean;

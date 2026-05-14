@@ -56,7 +56,7 @@ export class AdsService {
       const missing = categoryAttrs
         .filter(
           (a) =>
-            (a.tags.required || a.tags.catalog_required) &&
+            (a.tags.required || a.tags.catalog_required || a.tags.conditional_required) &&
             !ALWAYS_SKIP.includes(a.id) &&
             !a.tags.hidden &&
             !a.tags.read_only &&
