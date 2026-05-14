@@ -270,7 +270,16 @@ export class MercadoLivreService {
     categoryId: string,
     accessToken: string,
     limit = 10,
-  ): Promise<{ id: string; title: string; price: number; thumbnail: string; permalink: string; seller_id: number }[]> {
+  ): Promise<
+    {
+      id: string;
+      title: string;
+      price: number;
+      thumbnail: string;
+      permalink: string;
+      seller_id: number;
+    }[]
+  > {
     return withRetry(async () => {
       const params = new URLSearchParams({
         q: query,
@@ -278,7 +287,14 @@ export class MercadoLivreService {
         limit: String(limit),
       });
       const { data } = await mlHttpClient.get<{
-        results: { id: string; title: string; price: number; thumbnail: string; permalink: string; seller?: { id: number } }[];
+        results: {
+          id: string;
+          title: string;
+          price: number;
+          thumbnail: string;
+          permalink: string;
+          seller?: { id: number };
+        }[];
       }>(`/sites/MLB/search?${params.toString()}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });

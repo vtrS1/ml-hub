@@ -410,15 +410,22 @@ export class AdsService {
 
     const ad = await this.adsRepository.findById(adId, sellerId);
     if (!ad) throw new AppError("Anúncio não encontrado", 404);
-    if (!ad.mlItemId) throw new AppError("Anúncio sem ID no Mercado Livre", 400);
+    if (!ad.mlItemId)
+      throw new AppError("Anúncio sem ID no Mercado Livre", 400);
 
     // Busca detalhes do item no ML para obter category_id
     let categoryId: string | undefined;
     try {
-      const mlItem = await this.mlService.getItem(ad.mlItemId, seller.accessToken);
+      const mlItem = await this.mlService.getItem(
+        ad.mlItemId,
+        seller.accessToken,
+      );
       categoryId = mlItem.category_id;
     } catch (err) {
-      logger.warn({ err, mlItemId: ad.mlItemId }, "Não foi possível buscar item no ML para getCompetitors");
+      logger.warn(
+        { err, mlItemId: ad.mlItemId },
+        "Não foi possível buscar item no ML para getCompetitors",
+      );
     }
 
     if (!categoryId) {
@@ -447,12 +454,16 @@ export class AdsService {
 
     // Filtra o próprio anúncio do vendedor
     const mlSellerId = seller.mlUserId ? Number(seller.mlUserId) : 0;
-    const competitors = results.filter((r) => r.seller_id !== mlSellerId && r.id !== ad.mlItemId);
+    const competitors = results.filter(
+      (r) => r.seller_id !== mlSellerId && r.id !== ad.mlItemId,
+    );
 
     const prices = competitors.map((c) => c.price);
     const minPrice = prices.length ? Math.min(...prices) : null;
     const maxPrice = prices.length ? Math.max(...prices) : null;
-    const avgPrice = prices.length ? prices.reduce((a, b) => a + b, 0) / prices.length : null;
+    const avgPrice = prices.length
+      ? prices.reduce((a, b) => a + b, 0) / prices.length
+      : null;
 
     return {
       adId: ad._id,
