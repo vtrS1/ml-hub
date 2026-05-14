@@ -44,7 +44,8 @@ export class AdsService {
 
     // --- Pré-validação: busca atributos da categoria e verifica obrigatórios ---
     // IDs sempre ignorados (gerados automaticamente ou tratados separadamente)
-    const ALWAYS_SKIP = ["SELLER_SKU", "ITEM_CONDITION"];
+    // GRADING: gerenciado internamente pelo ML (business_conditional), nunca enviar
+    const ALWAYS_SKIP = ["SELLER_SKU", "ITEM_CONDITION", "GRADING"];
 
     try {
       const categoryAttrs = await this.mlService.getCategoryAttributes(
@@ -100,13 +101,17 @@ export class AdsService {
         .filter((a) => !ALWAYS_SKIP.includes(a.id))
         .filter((a) => a.value_name && a.value_name.trim().length > 0 && a.value_name !== "null")
         .map((a) => {
-          const parts = a.value_name.trim().split(" ");
+          const raw = a.value_name.trim();
+          const parts = raw.split(/\s+/); // split por qualquer whitespace
           // Para atributos number_unit: "42 mm" → { value_name: "42", unit_id: "mm" }
-          // O ML rejeita se value_name contiver a unidade junto quando unit_id também é enviado
           if (parts.length === 2 && !isNaN(Number(parts[0])) && isNaN(Number(parts[1]))) {
             return { id: a.id, value_name: parts[0], unit_id: parts[1] };
           }
-          return { id: a.id, value_name: a.value_name };
+          // Se só tem número mas o atributo tem unit_id enviado separado
+          if (parts.length === 1 && a.unit_id) {
+            return { id: a.id, value_name: parts[0], unit_id: a.unit_id };
+          }
+          return { id: a.id, value_name: raw };
         });
 
       const attributes = [

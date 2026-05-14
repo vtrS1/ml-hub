@@ -3,6 +3,7 @@ import { z } from "zod";
 const attributeSchema = z.object({
   id: z.string(),
   value_name: z.string(),
+  unit_id: z.string().optional(),
 });
 
 export const createAdSchema = z.object({
