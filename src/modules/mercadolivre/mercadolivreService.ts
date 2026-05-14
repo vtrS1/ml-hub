@@ -72,6 +72,14 @@ export interface MLItem {
   thumbnail: string;
   permalink: string;
   description?: string;
+  category_id?: string;
+  condition?: string;
+  listing_type_id?: string;
+  currency_id?: string;
+  buying_mode?: string;
+  attributes?: MLAttribute[];
+  sale_terms?: MLSaleTerm[];
+  pictures?: { source: string }[];
 }
 
 export interface MLItemsSearchResponse {
@@ -219,17 +227,22 @@ export class MercadoLivreService {
     await this.updateItem(itemId, { status: "active" }, accessToken);
   }
 
-  async getCategories(accessToken: string): Promise<{ id: string; name: string }[]> {
+  async getCategories(
+    accessToken: string,
+  ): Promise<{ id: string; name: string }[]> {
     return withRetry(async () => {
       const { data } = await mlHttpClient.get<{ id: string; name: string }[]>(
-        '/sites/MLB/categories',
+        "/sites/MLB/categories",
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       return data;
     });
   }
 
-  async getCategoryDetails(categoryId: string, accessToken: string): Promise<MLCategoryDetails> {
+  async getCategoryDetails(
+    categoryId: string,
+    accessToken: string,
+  ): Promise<MLCategoryDetails> {
     return withRetry(async () => {
       const { data } = await mlHttpClient.get<MLCategoryDetails>(
         `/categories/${categoryId}`,
@@ -239,7 +252,10 @@ export class MercadoLivreService {
     });
   }
 
-  async getCategoryAttributes(categoryId: string, accessToken: string): Promise<MLCategoryAttribute[]> {
+  async getCategoryAttributes(
+    categoryId: string,
+    accessToken: string,
+  ): Promise<MLCategoryAttribute[]> {
     return withRetry(async () => {
       const { data } = await mlHttpClient.get<MLCategoryAttribute[]>(
         `/categories/${categoryId}/attributes`,
