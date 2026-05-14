@@ -1,162 +1,239 @@
-# ML Hub â€” Backend (API)
+﻿# 🛒 ML Hub — Backend (API)
 
-> Backend do desafio tecnico: publicacao e gerenciamento de anuncios no Mercado Livre.
-
-## Stack
-
-- **Node.js 22** + **Express 5** + **TypeScript** (ESM / NodeNext)
-- **MongoDB Atlas** via Mongoose
-- **Zod** - validacao de schemas e variaveis de ambiente
-- **Pino** - logging estruturado
-- **JWT** - autenticacao stateless
-- **node-cron** - sync automatico a cada 15 min
-- **Axios** - cliente HTTP para a API do Mercado Livre
+> Backend da plataforma ML Hub: autenticação OAuth, publicação e gerenciamento de anúncios no Mercado Livre.
 
 ---
 
-## Arquitetura
+## ✨ Sobre o projeto
+
+O **ML Hub API** é o coração do sistema. Ele se conecta à API oficial do Mercado Livre para:
+
+- 🔐 Autenticar vendedores via OAuth 2.0
+- 📦 Criar, editar e sincronizar anúncios automaticamente
+- �� Analisar preços de concorrentes em tempo real
+- 🔄 Importar anúncios existentes do ML para a plataforma
+- ⏰ Sincronização automática via job agendado (cron a cada 15 min)
+- 🪝 Receber notificações push via webhooks do Mercado Livre
+
+---
+
+## 🚀 Tecnologias
+
+| Tecnologia | Uso |
+|---|---|
+| **Node.js 22 + TypeScript** | Runtime e tipagem estática (ESM / NodeNext) |
+| **Express 5** | Framework HTTP |
+| **MongoDB + Mongoose** | Banco de dados |
+| **Zod** | Validação de DTOs e variáveis de ambiente |
+| **JWT** | Autenticação stateless |
+| **Axios** | Cliente HTTP para a API do ML |
+| **Pino** | Logs estruturados |
+| **node-cron** | Sincronização agendada |
+| **Docker** | Containerização para deploy |
+
+---
+
+## 📁 Estrutura do Projeto
 
 ```
 src/
-â”œâ”€â”€ config/           # Validacao de env vars (Zod)
-â”œâ”€â”€ shared/
-â”‚   â”œâ”€â”€ database/     # Conexao MongoDB
-â”‚   â”œâ”€â”€ errors/       # AppError customizado
-â”‚   â”œâ”€â”€ http/         # Axios client para ML API
-â”‚   â”œâ”€â”€ logger/       # Pino logger
-â”‚   â”œâ”€â”€ middlewares/  # authMiddleware, errorMiddleware
-â”‚   â””â”€â”€ utils/        # withRetry (exponential backoff)
-â”œâ”€â”€ modules/
-â”‚   â”œâ”€â”€ auth/         # OAuth ML, JWT, seller persistence
-â”‚   â”œâ”€â”€ ads/          # CRUD anuncios + sync
-â”‚   â”œâ”€â”€ mercadolivre/ # Wrapper ML API
-â”‚   â”œâ”€â”€ sync/         # Reconciliacao local â†” ML
-â”‚   â””â”€â”€ webhooks/     # Notificacoes ML
-â””â”€â”€ jobs/             # syncJob (cron 15min)
+├── config/           # Variáveis de ambiente com validação Zod
+├── jobs/             # Cron jobs (sincronização automática)
+├── modules/
+│   ├── ads/          # Anúncios: CRUD, sync, competitors
+│   ├── auth/         # OAuth ML, JWT, gestão de sellers
+│   ├── mercadolivre/ # Integração direta com a API do ML
+│   ├── sync/         # Lógica de sincronização local ↔ ML
+│   └── webhooks/     # Recebimento de notificações do ML
+└── shared/
+    ├── database/     # Conexão MongoDB
+    ├── errors/       # AppError, tratamento de erros ML
+    ├── http/         # HttpClient com retry automático
+    ├── logger/       # Logger com Pino
+    ├── middlewares/  # Auth, error handler
+    └── utils/        # Utilitários (withRetry, backoff)
 ```
-
-### Decisoes tecnicas
-
-| Decisao | Motivo |
-|---------|--------|
-| ESM + NodeNext | Melhor compatibilidade futura, imports explicitos |
-| Repository pattern | Desacopla logica de negocio do banco, facilita testes |
-| SyncStatus enum | Rastreia estado: SYNCED / PENDING / ERROR / CONFLICT |
-| withRetry util | Resiliencia em falhas da API do ML (3 tentativas, backoff) |
-| Webhook handler | Recebe notificacoes push do ML sem polling |
-| JWT stateless | Sem sessao no servidor, escalavel horizontalmente |
 
 ---
 
-## Variaveis de ambiente
+## ⚙️ Configuração
 
-Crie `.env` na raiz:
+### Pré-requisitos
+
+- Node.js 22+
+- MongoDB Atlas (ou local)
+- Aplicativo criado no [Mercado Livre Developers](https://developers.mercadolivre.com.br)
+
+### 1. Clone e instale
+
+```bash
+git clone https://github.com/seu-usuario/ml-hub.git
+cd ml-hub-api
+npm install
+```
+
+### 2. Configure o `.env`
+
+Crie um arquivo `.env` na raiz:
 
 ```env
 PORT=3000
 NODE_ENV=development
-MONGO_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/sellersync
-JWT_SECRET=seu_secret_aqui
+
+# MongoDB
+MONGO_URI=mongodb+srv://usuario:senha@cluster.mongodb.net/sellersync
+
+# JWT
+JWT_SECRET=seu_segredo_jwt_aqui
+
+# Mercado Livre
 ML_APP_ID=seu_app_id
 ML_CLIENT_SECRET=seu_client_secret
-ML_REDIRECT_URI=https://seu-dominio.com/auth/mercadolivre/callback
+ML_REDIRECT_URI=http://localhost:3000/auth/mercadolivre/callback
+
+# Frontend
 FRONTEND_URL=http://localhost:4200
 ```
 
-> Para dev local, use **ngrok** para expor porta 3000 via HTTPS.
+> 💡 Para dev local, use o script `npm run tunnel` (ngrok) para expor a porta 3000 via HTTPS — necessário para o OAuth do ML.
 
----
-
-## Setup local
+### 3. Rode em desenvolvimento
 
 ```bash
-# 1. Instalar dependencias
-npm install
-
-# 2. Criar .env (ver secao acima)
-
-# 3. Iniciar em modo desenvolvimento
 npm run dev
-
-# 4. (Opcional) Expor via ngrok para OAuth
-npm run tunnel
 ```
 
-### Scripts
-
-| Script | Descricao |
-|--------|-----------|
-| `npm run dev` | Servidor com hot-reload via tsx |
-| `npm run build` | Compila TypeScript para ./dist |
-| `npm start` | Executa build compilado |
-| `npm run tunnel` | Inicia ngrok na porta 3000 |
+A API estará disponível em `http://localhost:3000`.
 
 ---
 
-## Endpoints
+## 🐳 Docker
 
-### Auth
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| GET | `/auth/mercadolivre` | Inicia OAuth do ML |
-| GET | `/auth/mercadolivre/callback` | Callback OAuth, retorna JWT |
+```bash
+# Build e start
+docker-compose up --build
 
-### Anuncios *(requer `Authorization: Bearer <token>`)*
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| GET | `/ads` | Listar (page, limit, status, title) |
-| GET | `/ads/:id` | Buscar por ID |
-| POST | `/ads` | Criar e publicar no ML |
-| PUT | `/ads/:id` | Editar titulo/descricao |
-| PATCH | `/ads/:id/price` | Atualizar preco |
-| PATCH | `/ads/:id/stock` | Atualizar estoque |
-| POST | `/ads/:id/pause` | Pausar anuncio |
-| POST | `/ads/:id/activate` | Reativar anuncio |
-| POST | `/ads/sync` | Sincronizar com ML |
+# Apenas start (sem rebuild)
+docker-compose up
+```
+
+---
+
+## 📜 Scripts
+
+| Script | Descrição |
+|---|---|
+| `npm run dev` | Servidor com hot-reload via `tsx watch` |
+| `npm run build` | Compila TypeScript para `./dist` |
+| `npm start` | Executa o build compilado |
+| `npm run tunnel` | Expõe porta 3000 via ngrok (OAuth local) |
+| `npm run lint` | Verifica código com ESLint |
+| `npm run format` | Formata código com Prettier |
+
+---
+
+## 📡 Endpoints
+
+### Autenticação
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/auth/mercadolivre` | Inicia fluxo OAuth com o ML |
+| `GET` | `/auth/mercadolivre/callback` | Callback OAuth — retorna JWT |
+
+### Anúncios *(requer `Authorization: Bearer <token>`)*
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/ads` | Lista anúncios (com filtros e paginação) |
+| `POST` | `/ads` | Cria e publica novo anúncio no ML |
+| `GET` | `/ads/:id` | Detalhe de um anúncio |
+| `PUT` | `/ads/:id` | Atualiza título e descrição |
+| `PATCH` | `/ads/:id/price` | Atualiza preço |
+| `PATCH` | `/ads/:id/stock` | Atualiza estoque |
+| `POST` | `/ads/:id/pause` | Pausa anúncio |
+| `POST` | `/ads/:id/activate` | Ativa anúncio |
+| `POST` | `/ads/sync` | Sincroniza todos os anúncios com o ML |
+| `GET` | `/ads/:id/competitors` | Análise de concorrentes |
+
+### Categorias
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/ads/categories` | Categorias raiz do ML |
+| `GET` | `/ads/categories/:id` | Detalhes de uma categoria |
+| `GET` | `/ads/categories/:id/attributes` | Atributos de uma categoria |
 
 ### Webhooks
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| POST | `/webhooks/mercadolivre` | Notificacoes push do ML |
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/webhooks/mercadolivre` | Recebe notificações push do ML |
 
 ---
 
-## Deploy (Render)
+## 🔒 Autenticação
+
+Todos os endpoints (exceto auth) exigem o header:
+
+```
+Authorization: Bearer <jwt_token>
+```
+
+O token é gerado após o fluxo OAuth e válido por **7 dias**.
+
+---
+
+## 🔄 Fluxo OAuth
+
+```
+Usuário clica "Entrar com ML"
+  → GET /auth/mercadolivre
+  → Redirect para auth.mercadolivre.com.br
+  → Usuário autoriza o app
+  → ML redireciona para ML_REDIRECT_URI?code=xxx
+  → Backend troca o code por access_token + refresh_token
+  → Salva seller no MongoDB (upsert por mlUserId)
+  → Gera JWT próprio
+  → Redireciona para FRONTEND_URL/auth/callback?token=JWT
+  → Frontend salva token no localStorage
+```
+
+---
+
+## 🧠 Destaques Técnicos
+
+- **Atributos tag-driven**: ao criar um anúncio, o sistema consulta a API do ML para descobrir quais atributos são obrigatórios para a categoria — sem listas hardcoded. Funciona automaticamente para qualquer categoria.
+- **Retry inteligente**: erros de rede são retentados com backoff exponencial. Erros 4xx (validação) nunca são retentados.
+- **Token refresh automático**: quando o access token do ML expira, o refresh token é usado transparentemente.
+- **Sincronização resiliente**: falhas na API do ML salvam o anúncio como `PENDING` para retry no próximo cron.
+
+---
+
+## 🌐 Deploy no Render
 
 1. Criar **Web Service** em [render.com](https://render.com)
-2. Conectar repositorio GitHub
-3. Configurar:
-   - **Build Command:** `npm install && npm run build`
-   - **Start Command:** `npm start`
-4. Adicionar todas as env vars na aba *Environment*
-5. Atualizar `ML_REDIRECT_URI` e `FRONTEND_URL` com URLs de producao
-6. Atualizar o Redirect URI no painel do app no Mercado Livre
+2. Conectar repositório GitHub
+3. Configurar runtime: **Docker** (usa o `Dockerfile` do projeto)
+4. Adicionar variáveis de ambiente na aba *Environment*
+5. Atualizar `ML_REDIRECT_URI` com a URL do Render
+6. Atualizar o **Redirect URI** no painel do app no Mercado Livre
 
----
+**Variáveis necessárias em produção:**
 
-## Fluxo OAuth
-
-```
-Usuario clica "Entrar com ML"
-  â†’ GET /auth/mercadolivre
-  â†’ Redirect para auth.mercadolivre.com.br
-  â†’ Usuario autoriza
-  â†’ ML redireciona para ML_REDIRECT_URI?code=xxx
-  â†’ Backend troca code por access_token + refresh_token
-  â†’ Salva seller no MongoDB (upsert)
-  â†’ Gera JWT
-  â†’ Redireciona para FRONTEND_URL/auth/callback?token=JWT
-  â†’ Frontend salva token no localStorage
+```env
+PORT=3000
+NODE_ENV=production
+MONGO_URI=...
+JWT_SECRET=...
+ML_APP_ID=...
+ML_CLIENT_SECRET=...
+ML_REDIRECT_URI=https://seu-backend.onrender.com/auth/mercadolivre/callback
+FRONTEND_URL=https://seu-frontend.vercel.app
 ```
 
 ---
 
-## Cenarios de resiliencia tratados
+## 📄 Licença
 
-| Cenario | Solucao |
-|---------|---------|
-| Token ML expirado | Refresh automatico via `refresh_token` |
-| Falha na API do ML | Salva como `PENDING`, retry no proximo cron |
-| Divergencia local vs ML | Status `CONFLICT` + reconciliacao no sync |
-| Duplicidade de anuncio | Verificacao de `mlItemId` unico por vendedor |
-| Falhas transitorias | `withRetry` com 3 tentativas e backoff exponencial |
+MIT
