@@ -38,7 +38,7 @@ export const updateStockSchema = z.object({
 
 export const listAdsQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(10),
+  limit: z.coerce.number().int().positive().max(500).default(10),
   status: z.string().optional(),
   title: z.string().optional(),
 });
