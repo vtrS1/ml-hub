@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { AppError } from "../../../shared/errors/AppError.js";
+import { handleMlError } from "../../../shared/errors/mlError.js";
 import { logger } from "../../../shared/logger/logger.js";
 import { MercadoLivreService } from "../../mercadolivre/mercadolivreService.js";
 import { AuthRepository } from "../../auth/repositories/authRepository.js";
@@ -22,7 +23,7 @@ export class AdsService {
   ) {}
 
   private async getSellerWithToken(sellerId: string) {
-    const seller = await this.authRepository.findByMlUserId(sellerId);
+    const seller = await this.authRepository.findById(sellerId);
     if (!seller) throw new AppError("Vendedor não encontrado", 404);
     return seller;
   }
@@ -38,8 +39,48 @@ export class AdsService {
   }
 
   async create(sellerId: string, dto: CreateAdDto): Promise<IAd> {
-    const seller = await this.authRepository.findByMlUserId(sellerId);
+    const seller = await this.authRepository.findById(sellerId);
     if (!seller) throw new AppError("Vendedor não encontrado", 404);
+
+    // --- Pré-validação: busca atributos da categoria e verifica obrigatórios ---
+    const SKIP_IDS = [
+      "GTIN",
+      "EAN",
+      "UPC",
+      "ISBN",
+      "MPN",
+      "SELLER_SKU",
+      "ITEM_CONDITION",
+    ];
+
+    try {
+      const categoryAttrs = await this.mlService.getCategoryAttributes(
+        dto.categoryId,
+        seller.accessToken,
+      );
+
+      const sentIds = new Set((dto.attributes ?? []).map((a) => a.id));
+      const missing = categoryAttrs
+        .filter(
+          (a) =>
+            (a.tags.required || a.tags.catalog_required) &&
+            !SKIP_IDS.includes(a.id) &&
+            !sentIds.has(a.id),
+        )
+        .map((a) => a.name);
+
+      if (missing.length > 0) {
+        throw new AppError(
+          `Campos obrigatórios não preenchidos para esta categoria: ${missing.join(", ")}`,
+          422,
+        );
+      }
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      // Se falhar ao buscar atributos, loga mas não bloqueia a criação
+      logger.warn({ err }, "Não foi possível validar atributos da categoria");
+    }
+    // -------------------------------------------------------------------------
 
     let mlItemId = "";
     let thumbnail = "";
@@ -54,20 +95,9 @@ export class AdsService {
             ? "Usado"
             : "Não especificado";
 
-      const SKIP_IDS = [
-        "GTIN",
-        "EAN",
-        "UPC",
-        "ISBN",
-        "MPN",
-        "SELLER_SKU",
-        "ITEM_CONDITION",
-      ];
       const dynamicAttrs = (dto.attributes ?? [])
         .filter((a) => !SKIP_IDS.includes(a.id))
-        // Remove atributos vazios
         .filter((a) => a.value_name && a.value_name.trim().length > 0)
-        // Para atributos number_unit (ex: "12 kg"), extrai unit_id para o payload do ML
         .map((a) => {
           const parts = a.value_name.trim().split(" ");
           if (parts.length === 2 && !isNaN(Number(parts[0]))) {
@@ -86,6 +116,27 @@ export class AdsService {
           title: dto.title,
           price: dto.price,
           available_quantity: dto.availableQuantity,
+          category_id: dto.categoryId,
+          condition: dto.condition,
+          listing_type_id: dto.listingTypeId,
+          currency_id: dto.currencyId ?? "BRL",
+          buying_mode: dto.buyingMode ?? "buy_it_now",
+          attributes,
+          ...(dto.warrantyType || dto.warrantyTime
+            ? {
+                sale_terms: [
+                  ...(dto.warrantyType
+                    ? [{ id: "WARRANTY_TYPE", value_name: dto.warrantyType }]
+                    : []),
+                  ...(dto.warrantyTime
+                    ? [{ id: "WARRANTY_TIME", value_name: dto.warrantyTime }]
+                    : []),
+                ],
+              }
+            : {}),
+          ...(dto.pictureUrls && dto.pictureUrls.length > 0
+            ? { pictures: dto.pictureUrls.map((url) => ({ source: url })) }
+            : {}),
         },
         seller.accessToken,
       );
@@ -94,7 +145,7 @@ export class AdsService {
       permalink = mlItem.permalink;
       syncStatus = SyncStatus.SYNCED;
     } catch (err) {
-      logger.warn({ err }, "Falha ao criar item no ML, salvando como PENDING");
+      handleMlError(err, "Falha ao criar anúncio no Mercado Livre");
     }
 
     const existingAd = mlItemId
@@ -135,8 +186,8 @@ export class AdsService {
           seller.accessToken,
         );
       } catch (err) {
-        logger.warn({ err }, "Falha ao atualizar item no ML");
         await this.adsRepository.updateSyncStatus(id, SyncStatus.ERROR);
+        handleMlError(err, "Falha ao atualizar anúncio no Mercado Livre");
       }
     }
 
@@ -166,9 +217,8 @@ export class AdsService {
           seller.accessToken,
         );
       } catch (err) {
-        logger.warn({ err }, "Falha ao atualizar preço no ML");
         await this.adsRepository.updateSyncStatus(id, SyncStatus.ERROR);
-        throw new AppError("Falha ao atualizar preço no Mercado Livre", 502);
+        handleMlError(err, "Falha ao atualizar preço no Mercado Livre");
       }
     }
 
@@ -198,9 +248,8 @@ export class AdsService {
           seller.accessToken,
         );
       } catch (err) {
-        logger.warn({ err }, "Falha ao atualizar estoque no ML");
         await this.adsRepository.updateSyncStatus(id, SyncStatus.ERROR);
-        throw new AppError("Falha ao atualizar estoque no Mercado Livre", 502);
+        handleMlError(err, "Falha ao atualizar estoque no Mercado Livre");
       }
     }
 
@@ -219,7 +268,11 @@ export class AdsService {
     const seller = await this.getSellerWithToken(ad.sellerId.toString());
 
     if (ad.mlItemId) {
-      await this.mlService.pauseItem(ad.mlItemId, seller.accessToken);
+      try {
+        await this.mlService.pauseItem(ad.mlItemId, seller.accessToken);
+      } catch (err) {
+        handleMlError(err, "Falha ao pausar anúncio no Mercado Livre");
+      }
     }
 
     const updated = await this.adsRepository.update(id, sellerId, {
@@ -237,7 +290,11 @@ export class AdsService {
     const seller = await this.getSellerWithToken(ad.sellerId.toString());
 
     if (ad.mlItemId) {
-      await this.mlService.activateItem(ad.mlItemId, seller.accessToken);
+      try {
+        await this.mlService.activateItem(ad.mlItemId, seller.accessToken);
+      } catch (err) {
+        handleMlError(err, "Falha ao ativar anúncio no Mercado Livre");
+      }
     }
 
     const updated = await this.adsRepository.update(id, sellerId, {
@@ -268,8 +325,7 @@ export class AdsService {
         seller.accessToken,
       );
     } catch (err) {
-      logger.error({ err }, "Erro ao buscar itens do seller no ML");
-      throw new AppError("Falha ao buscar anúncios do Mercado Livre", 502);
+      handleMlError(err, "Falha ao buscar anúncios do Mercado Livre");
     }
 
     // Mapeia os mlItemIds já salvos no banco para detectar novos
@@ -304,7 +360,6 @@ export class AdsService {
           );
           synced++;
         } else {
-          // Anúncio novo (criado direto no ML) → importa para o banco
           await this.adsRepository.create({
             sellerId: new mongoose.Types.ObjectId(sellerId),
             mlItemId: item.id,
@@ -329,21 +384,23 @@ export class AdsService {
     return { synced, imported, errors };
   }
 
-  async getCategories(sellerId: string): Promise<{ id: string; name: string }[]> {
+  async getCategories(
+    sellerId: string,
+  ): Promise<{ id: string; name: string }[]> {
     const seller = await this.authRepository.findById(sellerId);
-    if (!seller) throw new AppError('Vendedor não encontrado', 404);
+    if (!seller) throw new AppError("Vendedor não encontrado", 404);
     return this.mlService.getCategories(seller.accessToken);
   }
 
   async getCategoryDetails(sellerId: string, categoryId: string) {
     const seller = await this.authRepository.findById(sellerId);
-    if (!seller) throw new AppError('Vendedor não encontrado', 404);
+    if (!seller) throw new AppError("Vendedor não encontrado", 404);
     return this.mlService.getCategoryDetails(categoryId, seller.accessToken);
   }
 
   async getCategoryAttributes(sellerId: string, categoryId: string) {
     const seller = await this.authRepository.findById(sellerId);
-    if (!seller) throw new AppError('Vendedor não encontrado', 404);
+    if (!seller) throw new AppError("Vendedor não encontrado", 404);
     return this.mlService.getCategoryAttributes(categoryId, seller.accessToken);
   }
 }
