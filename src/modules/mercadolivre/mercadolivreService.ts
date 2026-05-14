@@ -43,6 +43,8 @@ export interface MLCategoryAttribute {
     read_only?: boolean;
     multivalued?: boolean;
     variation_attribute?: boolean;
+    business_conditional?: boolean;
+    [key: string]: unknown;
   };
   values?: MLAttributeValue[];
   allowed_units?: { id: string; name: string }[];

@@ -43,15 +43,8 @@ export class AdsService {
     if (!seller) throw new AppError("Vendedor não encontrado", 404);
 
     // --- Pré-validação: busca atributos da categoria e verifica obrigatórios ---
-    const SKIP_IDS = [
-      "GTIN",
-      "EAN",
-      "UPC",
-      "ISBN",
-      "MPN",
-      "SELLER_SKU",
-      "ITEM_CONDITION",
-    ];
+    // IDs sempre ignorados (gerados automaticamente ou tratados separadamente)
+    const ALWAYS_SKIP = ["SELLER_SKU", "ITEM_CONDITION"];
 
     try {
       const categoryAttrs = await this.mlService.getCategoryAttributes(
@@ -64,7 +57,10 @@ export class AdsService {
         .filter(
           (a) =>
             (a.tags.required || a.tags.catalog_required) &&
-            !SKIP_IDS.includes(a.id) &&
+            !ALWAYS_SKIP.includes(a.id) &&
+            !a.tags.hidden &&
+            !a.tags.read_only &&
+            !(a.tags as Record<string, unknown>).business_conditional &&
             !sentIds.has(a.id),
         )
         .map((a) => a.name);
@@ -96,8 +92,8 @@ export class AdsService {
             : "Não especificado";
 
       const dynamicAttrs = (dto.attributes ?? [])
-        .filter((a) => !SKIP_IDS.includes(a.id))
-        .filter((a) => a.value_name && a.value_name.trim().length > 0)
+        .filter((a) => !ALWAYS_SKIP.includes(a.id))
+        .filter((a) => a.value_name && a.value_name.trim().length > 0 && a.value_name !== "null")
         .map((a) => {
           const parts = a.value_name.trim().split(" ");
           // Para atributos number_unit: "42 mm" → { value_name: "42", unit_id: "mm" }
