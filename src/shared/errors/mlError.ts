@@ -1,5 +1,6 @@
 import axios from "axios";
 import { AppError } from "./AppError.js";
+import { logger } from "../logger/logger.js";
 
 interface MLCause {
   code?: string;
@@ -25,6 +26,9 @@ export function handleMlError(err: unknown, fallbackMessage: string): never {
     const data = err.response?.data as MLErrorResponse | undefined;
     const status = err.response?.status ?? 502;
 
+    // Loga o corpo completo para facilitar debug
+    logger.error({ mlStatus: status, mlBody: data }, "Erro da API Mercado Livre");
+
     // Erro de campos obrigatórios — lista os campos faltantes
     if (
       data?.message === "body.required_fields" &&
@@ -35,8 +39,20 @@ export function handleMlError(err: unknown, fallbackMessage: string): never {
         .filter(Boolean)
         .join(", ");
       const msg = fields
-        ? `Campos obrigatórios não preenchidos para esta categoria: ${fields}`
+        ? `Campos obrigatórios não preenchidos: ${fields}`
         : "Campos obrigatórios não preenchidos para esta categoria";
+      throw new AppError(msg, 422);
+    }
+
+    // Validation error — tenta extrair causas detalhadas
+    if (data?.message === "Validation error" && Array.isArray(data?.cause)) {
+      const details = (data.cause as MLCause[])
+        .map((c) => [c.field, c.message, c.code].filter(Boolean).join(": "))
+        .filter(Boolean)
+        .join(" | ");
+      const msg = details
+        ? `Mercado Livre: erro de validação — ${details}`
+        : "Mercado Livre: erro de validação";
       throw new AppError(msg, 422);
     }
 

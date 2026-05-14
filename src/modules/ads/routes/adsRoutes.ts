@@ -31,5 +31,6 @@ router.patch("/:id/price", adsController.updatePrice);
 router.patch("/:id/stock", adsController.updateStock);
 router.post("/:id/pause", adsController.pause);
 router.post("/:id/activate", adsController.activate);
+router.get("/:id/competitors", adsController.getCompetitors);
 
 export default router;

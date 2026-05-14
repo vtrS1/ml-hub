@@ -204,4 +204,19 @@ export class AdsController {
       next(err);
     }
   };
+
+  getCompetitors = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> => {
+    try {
+      const sellerId = this.getSellerId(req);
+      const id = String(req.params["id"]);
+      const result = await this.adsService.getCompetitors(sellerId, id);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  };
 }

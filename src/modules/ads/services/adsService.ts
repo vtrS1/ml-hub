@@ -100,8 +100,10 @@ export class AdsService {
         .filter((a) => a.value_name && a.value_name.trim().length > 0)
         .map((a) => {
           const parts = a.value_name.trim().split(" ");
-          if (parts.length === 2 && !isNaN(Number(parts[0]))) {
-            return { id: a.id, value_name: a.value_name, unit_id: parts[1] };
+          // Para atributos number_unit: "42 mm" → { value_name: "42", unit_id: "mm" }
+          // O ML rejeita se value_name contiver a unidade junto quando unit_id também é enviado
+          if (parts.length === 2 && !isNaN(Number(parts[0])) && isNaN(Number(parts[1]))) {
+            return { id: a.id, value_name: parts[0], unit_id: parts[1] };
           }
           return { id: a.id, value_name: a.value_name };
         });
@@ -402,5 +404,62 @@ export class AdsService {
     const seller = await this.authRepository.findById(sellerId);
     if (!seller) throw new AppError("Vendedor não encontrado", 404);
     return this.mlService.getCategoryAttributes(categoryId, seller.accessToken);
+  }
+
+  async getCompetitors(sellerId: string, adId: string) {
+    const seller = await this.authRepository.findById(sellerId);
+    if (!seller) throw new AppError("Vendedor não encontrado", 404);
+
+    const ad = await this.adsRepository.findById(adId, sellerId);
+    if (!ad) throw new AppError("Anúncio não encontrado", 404);
+    if (!ad.mlItemId) throw new AppError("Anúncio sem ID no Mercado Livre", 400);
+
+    let categoryId: string | undefined;
+    try {
+      const mlItem = await this.mlService.getItem(ad.mlItemId, seller.accessToken);
+      categoryId = mlItem.category_id;
+    } catch (err) {
+      logger.warn({ err, mlItemId: ad.mlItemId }, "Não foi possível buscar item no ML para getCompetitors");
+    }
+
+    if (!categoryId) {
+      return {
+        adId: ad._id,
+        mlItemId: ad.mlItemId,
+        title: ad.title,
+        myPrice: ad.price,
+        competitors: [],
+        stats: { minPrice: null, maxPrice: null, avgPrice: null, count: 0 },
+      };
+    }
+
+    let results: Awaited<ReturnType<typeof this.mlService.searchItems>> = [];
+    try {
+      results = await this.mlService.searchItems(
+        ad.title,
+        categoryId,
+        seller.accessToken,
+        20,
+      );
+    } catch (err) {
+      logger.warn({ err }, "Não foi possível buscar concorrentes no ML");
+    }
+
+    const mlSellerId = seller.mlUserId ? Number(seller.mlUserId) : 0;
+    const competitors = results.filter((r) => r.seller_id !== mlSellerId && r.id !== ad.mlItemId);
+
+    const prices = competitors.map((c) => c.price);
+    const minPrice = prices.length ? Math.min(...prices) : null;
+    const maxPrice = prices.length ? Math.max(...prices) : null;
+    const avgPrice = prices.length ? prices.reduce((a, b) => a + b, 0) / prices.length : null;
+
+    return {
+      adId: ad._id,
+      mlItemId: ad.mlItemId,
+      title: ad.title,
+      myPrice: ad.price,
+      competitors: competitors.slice(0, 10),
+      stats: { minPrice, maxPrice, avgPrice, count: competitors.length },
+    };
   }
 }
